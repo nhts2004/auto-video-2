@@ -5,7 +5,7 @@ import {
   ImportedFile, RenderSettings, ExportOptions
 } from '@/types';
 
-// Full interface
+// Full, correct interface with all required actions
 interface ProjectState {
   currentProject: Project | null;
   importedFiles: ImportedFile[];
@@ -32,6 +32,7 @@ interface ProjectState {
   applyStyleAndTransformToTrack: (trackId: string, clip: TextClip | ImageClip) => void;
   selectClip: (clipId: string) => void;
   deselectAllClips: () => void;
+  togglePlayback: () => void;
   startRender: (options: ExportOptions) => Promise<void>;
   cancelRender: () => void;
   clearRenderError: () => void;
@@ -48,15 +49,16 @@ const defaultExportOptions: ExportOptions = {
   includeAudio: true, includeSubtitles: true
 };
 
-// Helper functions (outside store)
-function parseSRT(content: string) {
+// Helper functions
+function parseSRT(content: string): any[] {
+    // Implementation restored
     const subtitles = [];
     const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const blocks = normalized.trim().split(/\n{2,}/);
     for (const block of blocks) {
         const lines = block.trim().split('\n');
         if (lines.length < 2) continue;
-        const timeMatch = lines[1].match(/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/);
+        const timeMatch = lines[1]?.match(/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/);
         if (!timeMatch) continue;
         const start = parseTimeToMs(timeMatch[1]);
         const end = parseTimeToMs(timeMatch[2]);
@@ -70,7 +72,7 @@ function parseTimeToMs(timeStr: string): number {
     const clean = timeStr.replace('.', ',');
     const [time, ms] = clean.split(',');
     const [hours, minutes, seconds] = time.split(':').map(Number);
-    return (hours * 3600 + minutes * 60 + seconds) * 1000 + parseInt(ms);
+    return (hours * 3600 + minutes * 60 + seconds) * 1000 + (parseInt(ms) || 0);
 }
 
 
@@ -98,6 +100,7 @@ export const useProjectStore = create<ProjectState>()(
     },
     loadProject: (project) => set({ currentProject: project }),
 
+    // Restored import functions
     importSRT: async (file) => {
         const content = await file.text();
         const subtitles = parseSRT(content);
@@ -120,6 +123,7 @@ export const useProjectStore = create<ProjectState>()(
         });
     },
 
+    // Restored autoLayoutTimeline with writingMode fix
     autoLayoutTimeline: () => {
         set(state => {
             if (!state.currentProject) return;
@@ -131,7 +135,13 @@ export const useProjectStore = create<ProjectState>()(
                     const clip: TextClip = {
                         id: `clip-${srtFile.id}-${index}`, type: 'text', start: sub.start, end: sub.end, text: sub.text,
                         trackId: track.id, position: { x: 50, y: 80 }, transform: { scale: 1, rotation: 0 },
-                        style: { fontSize: 48, fontFamily: 'Arial', color: '#ffffff', backgroundColor: 'transparent' }
+                        style: {
+                            fontSize: 48,
+                            fontFamily: 'Arial',
+                            color: '#ffffff',
+                            backgroundColor: 'transparent',
+                            writingMode: 'horizontal-tb' // Fixed: Added required property
+                        }
                     };
                     track.clips.push(clip);
                 });
@@ -176,6 +186,7 @@ export const useProjectStore = create<ProjectState>()(
 
     selectClip: (clipId) => set({ selectedClips: [clipId] }),
     deselectAllClips: () => set({ selectedClips: [] }),
+    togglePlayback: () => set(state => ({ isPlaying: !state.isPlaying })),
 
     startRender: async (options) => {
       set({ isRendering: true, renderProgress: 0, renderError: null });
