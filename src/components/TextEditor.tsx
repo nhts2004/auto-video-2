@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { TextClip } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
+import { colorInputValue, combineHexWithAlpha, parseColorWithAlpha } from '@/utils/color';
 
 interface TextEditorProps {
   clip: TextClip;
@@ -55,6 +56,8 @@ export default function TextEditor({ clip, onClose }: TextEditorProps) {
     '#ffff00', '#ff00ff', '#00ffff', '#ffa500', '#800080',
     '#ffc0cb', '#a52a2a', '#808080', '#000080', '#008000'
   ];
+
+  const backgroundColorParsed = parseColorWithAlpha(localClip.style.backgroundColor);
 
   return (
     <motion.div
@@ -160,8 +163,12 @@ export default function TextEditor({ clip, onClose }: TextEditorProps) {
             <div className="flex items-center space-x-3">
               <input
                 type="color"
-                value={localClip.style.backgroundColor || '#000000'}
-                onChange={(e) => handleStyleUpdate({ backgroundColor: e.target.value })}
+                value={colorInputValue(localClip.style.backgroundColor)}
+                onChange={(e) =>
+                  handleStyleUpdate({
+                    backgroundColor: combineHexWithAlpha(e.target.value, backgroundColorParsed.alphaFloat),
+                  })
+                }
                 className="w-12 h-10 border border-gray-300 dark:border-gray-600 rounded cursor-pointer"
               />
               <button

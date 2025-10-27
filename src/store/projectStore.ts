@@ -156,7 +156,7 @@ export const useProjectStore = create<ProjectState>()(
 
     importImage: async (file: File) => {
       const url = URL.createObjectURL(file);
-      
+
       set((state) => {
         const importedFile: ImportedFile = {
           id: Date.now().toString(),
@@ -171,7 +171,7 @@ export const useProjectStore = create<ProjectState>()(
 
     importAudio: async (file: File) => {
       const url = URL.createObjectURL(file);
-      
+
       set((state) => {
         const importedFile: ImportedFile = {
           id: Date.now().toString(),
@@ -181,15 +181,14 @@ export const useProjectStore = create<ProjectState>()(
           data: { url }
         };
         state.importedFiles.push(importedFile);
-        
-        // Set as project audio if it's the first audio file
+
         if (state.currentProject && !state.currentProject.audioFile) {
           state.currentProject.audioFile = url;
         }
       });
     },
 
-    removeFile: (fileId: string) => {
+removeFile: (fileId: string) => {
       set((state) => {
         state.importedFiles = state.importedFiles.filter(file => file.id !== fileId);
       });
@@ -368,7 +367,7 @@ export const useProjectStore = create<ProjectState>()(
                     fontSize: 36,
                     fontFamily: 'Arial',
                     color: '#ffffff',
-                    backgroundColor: '#00000080',
+                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
                     writingMode: 'horizontal-tb'
                   },
                   trackId: textTrack.id
@@ -463,44 +462,59 @@ export const useProjectStore = create<ProjectState>()(
         state.renderProgress = 0;
         state.exportOptions = options;
       });
-      
+
       try {
-        const { currentProject } = get();
+        const { currentProject, importedFiles } = get();
         if (!currentProject) throw new Error('No project loaded');
 
-        // Call API route for rendering (server-side)
+        const projectPayload =
+          typeof structuredClone === 'function'
+            ? structuredClone(currentProject)
+            : JSON.parse(JSON.stringify(currentProject));
+
+        const formData = new FormData();
+        formData.append('project', JSON.stringify(projectPayload));
+        formData.append(
+          'options',
+          JSON.stringify({
+            format: options.format,
+            settings: options.settings,
+            includeAudio: options.includeAudio,
+          }),
+        );
+
+        const manifest = importedFiles.map((file) => ({
+          id: file.id,
+          type: file.type,
+          previewUrl: file.data?.url ?? null,
+          name: file.name,
+        }));
+        formData.append('manifest', JSON.stringify(manifest));
+
+        importedFiles.forEach((file) => {
+          formData.append(`file_${file.id}`, file.file, file.name);
+        });
+
         const response = await fetch('/api/render', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            project: currentProject,
-            options: {
-              format: options.format,
-              settings: options.settings,
-              includeAudio: options.includeAudio
-            }
-          }),
+          body: formData,
         });
 
         if (!response.ok) {
           throw new Error('Render request failed');
         }
 
-        // Simulate progress for now (in real implementation, you'd use WebSocket or polling)
         for (let i = 0; i <= 100; i += 10) {
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise((resolve) => setTimeout(resolve, 200));
           get().updateRenderProgress(i);
         }
 
         console.log('Render completed');
-        
+
         set((state) => {
           state.isRendering = false;
           state.renderProgress = 100;
         });
-
       } catch (error) {
         console.error('Render failed:', error);
         set((state) => {
@@ -544,6 +558,7 @@ export const useProjectStore = create<ProjectState>()(
 );
 
 // Helper function to parse SRT content
+
 function parseSRT(content: string) {
   const subtitles = [];
   // Normalize line endings to \n

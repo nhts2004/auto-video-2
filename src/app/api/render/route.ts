@@ -1,214 +1,298 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { bundle } from '@remotion/bundler';
 import { renderMedia, selectComposition } from '@remotion/renderer';
-import { spawn } from 'child_process';
+import type { ExportOptions, Project, RenderSettings } from '@/types';
 import path from 'path';
-import ffmpegStatic from 'ffmpeg-static';
 import fs from 'fs';
+import { promises as fsPromises } from 'fs';
+import { pathToFileURL } from 'url';
+
+const EXPORT_DIR = path.join(process.cwd(), 'export');
+const ASSETS_DIR = path.join(EXPORT_DIR, 'assets');
+const SUPPORTED_FORMATS: SupportedFormat[] = ['mp4', 'mov'];
+const MIME_EXTENSION_MAP: Record<string, string> = {
+  'audio/mpeg': '.mp3',
+  'audio/mp3': '.mp3',
+  'audio/wav': '.wav',
+  'audio/x-wav': '.wav',
+  'audio/ogg': '.ogg',
+  'audio/aac': '.aac',
+  'audio/mp4': '.m4a',
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+};
+
+type SupportedFormat = Extract<ExportOptions['format'], 'mp4' | 'mov'>;
+type SupportedCodec = RenderSettings['codec'];
+
+type RenderOptions = {
+  format: SupportedFormat;
+  settings?: Partial<RenderSettings>;
+  includeAudio?: boolean;
+};
+
+type ProjectPayload = Partial<Project> & { name?: string };
+
+type AssetManifestEntry = {
+  id: string;
+  type: 'srt' | 'image' | 'audio';
+  previewUrl: string | null;
+  name: string;
+};
+
+type PreparedPayload = {
+  project: ProjectPayload;
+  options: RenderOptions;
+  cleanup?: () => Promise<void>;
+};
 
 export async function POST(request: NextRequest) {
-  try {
-    const { project, options } = await request.json();
+  let cleanup: (() => Promise<void>) | undefined;
 
-    // Validate request
-    if (!project || !options) {
+  try {
+    const contentType = request.headers.get('content-type') ?? '';
+    if (!contentType.includes('multipart/form-data')) {
+      return NextResponse.json(
+        { error: 'Invalid request: expected multipart/form-data payload.' },
+        { status: 400 },
+      );
+    }
+
+    const formData = await request.formData();
+    const prepared = await parseMultipartPayload(formData);
+    cleanup = prepared.cleanup;
+
+    const { project, options } = prepared;
+
+    if (!project || !options || !isSupportedFormat(options.format)) {
       return NextResponse.json({ error: 'Invalid request data' }, { status: 400 });
     }
 
     console.log('Render request received:', { project: project.name, options });
 
-    // Execute server-side rendering pipeline
     const outputPath = await renderVideoServerSide(project, options);
     const filename = path.basename(outputPath);
 
     return NextResponse.json({
       success: true,
       message: 'Render completed successfully',
-      downloadUrl: `/api/download/${filename}`
+      downloadUrl: `/api/download/${filename}`,
     });
-
   } catch (error) {
     console.error('Render error:', error);
-    return NextResponse.json({ 
-      error: 'Render failed', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: 'Render failed',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      },
+      { status: 500 },
+    );
+  } finally {
+    if (cleanup) {
+      cleanup().catch((err) => console.warn('Failed to cleanup assets:', err));
+    }
   }
 }
 
-// Alternative: Move renderVideo function here (server-side only)
-async function renderVideoServerSide(project: any, options: any) {
+async function parseMultipartPayload(formData: FormData): Promise<PreparedPayload> {
+  const projectRaw = formData.get('project');
+  const optionsRaw = formData.get('options');
+  const manifestRaw = formData.get('manifest');
+
+  if (typeof projectRaw !== 'string' || typeof optionsRaw !== 'string') {
+    throw new Error('Invalid form data payload');
+  }
+
+  const project = JSON.parse(projectRaw) as ProjectPayload;
+  const options = JSON.parse(optionsRaw) as RenderOptions;
+  const manifest: AssetManifestEntry[] = Array.isArray(manifestRaw)
+    ? []
+    : JSON.parse(typeof manifestRaw === 'string' ? manifestRaw : '[]');
+
+  ensureDirectory(ASSETS_DIR);
+
+  const filesToCleanup: string[] = [];
+  const assetMap: Array<{ previewUrl: string | null; fileUrl: string; type: 'image' | 'audio' }> = [];
+
+  for (const entry of manifest) {
+    if (entry.type !== 'image' && entry.type !== 'audio') {
+      continue;
+    }
+
+    const formFile = formData.get(`file_${entry.id}`);
+    if (!(formFile instanceof File)) {
+      continue;
+    }
+
+    const arrayBuffer = await formFile.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    const extension = deriveExtension(formFile.name, formFile.type);
+    const filename = `${Date.now()}-${entry.id}${extension}`;
+    const assetPath = path.join(ASSETS_DIR, filename);
+
+    await fsPromises.writeFile(assetPath, buffer);
+    filesToCleanup.push(assetPath);
+
+    assetMap.push({
+      previewUrl: entry.previewUrl,
+      fileUrl: pathToFileURL(assetPath).href,
+      type: entry.type,
+    });
+  }
+
+  const projectCopy = typeof structuredClone === 'function'
+    ? structuredClone(project)
+    : JSON.parse(JSON.stringify(project));
+
+  const replaceSrc = (src: string | undefined | null) => {
+    if (!src) return src;
+    const asset = assetMap.find((item) => item.previewUrl === src);
+    return asset ? asset.fileUrl : src;
+  };
+
+  if (Array.isArray(projectCopy.tracks)) {
+    projectCopy.tracks = projectCopy.tracks.map((track) => {
+      if (!Array.isArray(track.clips)) {
+        return track;
+      }
+
+      return {
+        ...track,
+        clips: track.clips.map((clip) => {
+          if (clip.type === 'image' || clip.type === 'audio') {
+            return {
+              ...clip,
+              src: replaceSrc((clip as { src?: string }).src),
+            };
+          }
+          return clip;
+        }),
+      };
+    });
+  }
+
+  if (projectCopy.audioFile) {
+    projectCopy.audioFile = replaceSrc(projectCopy.audioFile) ?? projectCopy.audioFile;
+  }
+
+  const cleanup = async () => {
+    await Promise.allSettled(filesToCleanup.map((filePath) => fsPromises.unlink(filePath)));
+  };
+
+  return { project: projectCopy, options, cleanup };
+}
+
+async function renderVideoServerSide(project: ProjectPayload, options: RenderOptions) {
   try {
-    // Step 1: Bundle Remotion composition
     console.log('Bundling Remotion composition...');
     const bundleLocation = await bundle({
       entryPoint: path.resolve('./src/compositions/registerRoot.tsx'),
       webpackOverride: (config) => config,
     });
 
-    // Step 2: Select composition
     const composition = await selectComposition({
       serveUrl: bundleLocation,
       id: 'MainComposition',
       inputProps: { project },
     });
 
-    // Step 3: Render frames with Remotion
-    console.log('Rendering frames with Remotion...');
-    const tempDir = path.join(process.cwd(), 'temp-frames');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
+    console.log('Rendering media...');
 
-    const framePattern = path.join(tempDir, 'frame-%d.png');
+    ensureDirectory(EXPORT_DIR);
+
+    const outputFilename = createOutputFilename(project?.name, options.format);
+    const outputPath = path.join(EXPORT_DIR, outputFilename);
+
+    const codec = resolveCodec(options.settings?.codec);
+    const audioCodec = resolveAudioCodec(codec, options.includeAudio);
 
     await renderMedia({
-      composition,
       serveUrl: bundleLocation,
-      codec: 'h264',            // hoặc 'vp9' | 'gif' | 'prores' ...
-      outputLocation: 'out/video.mp4',
-      imageFormat: 'png',       // OK: khung nguồn là PNG
-      jpegQuality: 95,          // chỉ áp dụng khi imageFormat = 'jpeg'
-      scale: 1,
+      composition,
       inputProps: { project },
-    });
-    
-
-    // Step 4: Encode with FFmpeg
-    console.log('Encoding with FFmpeg...');
-    const timestamp = Date.now();
-    const outputPath = path.join(process.cwd(), 'export', `video_${timestamp}.${options.format}`);
-    
-    // Ensure export directory exists
-    const exportDir = path.join(process.cwd(), 'export');
-    if (!fs.existsSync(exportDir)) {
-      fs.mkdirSync(exportDir, { recursive: true });
-    }
-
-    const finalOutputPath = await encodeWithFFmpeg({
-      framePattern,
-      outputPath,
-      format: options.format,
-      settings: options.settings,
-      includeAudio: options.includeAudio,
-      audioPath: project.audioFile,
-      project
+      codec,
+      audioCodec,
+      muted: options.includeAudio === false,
+      outputLocation: outputPath,
+      imageFormat: 'png',
+      jpegQuality: 95,
+      pixelFormat: options.settings?.pixelFormat ?? 'yuv420p',
+      crf: options.settings?.crf,
+      overwrite: true,
+      dumpBrowserLogs: true,
+      logLevel: 'info',
+      chromiumOptions: {
+        args: ['--allow-file-access-from-files'],
+      },
     });
 
-    // Cleanup temp files
-    console.log('Cleaning up temporary files...');
-    await cleanupTempFiles(tempDir);
-
-    return finalOutputPath;
-
+    return outputPath;
   } catch (error) {
     console.error('Render error:', error);
     throw error;
   }
 }
 
-async function encodeWithFFmpeg(options: {
-  framePattern: string;
-  outputPath: string;
-  format: 'mp4' | 'mov';
-  settings: any;
-  includeAudio: boolean;
-  audioPath?: string;
-  project: any;
-}): Promise<string> {
-  const {
-    framePattern,
-    outputPath,
-    format,
-    settings,
-    includeAudio,
-    audioPath,
-    project
-  } = options;
-
-  return new Promise((resolve, reject) => {
-    const ffmpegPath = ffmpegStatic as string;
-    
-    // Build FFmpeg command
-    const args = [
-      '-y', // Overwrite output file
-      '-framerate', settings.fps.toString(),
-      '-i', framePattern,
-    ];
-
-    // Add audio if provided
-    if (includeAudio && audioPath && fs.existsSync(audioPath)) {
-      args.push('-i', audioPath);
-    }
-
-    // Video encoding settings
-    args.push(
-      '-c:v', 'libx264',
-      '-pix_fmt', settings.pixelFormat,
-      '-profile:v', settings.profile,
-      '-crf', settings.crf.toString(),
-      '-preset', 'medium',
-      '-movflags', '+faststart'
-    );
-
-    // Audio settings
-    if (includeAudio && audioPath) {
-      args.push(
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-shortest' // End when shortest input ends
-      );
-    }
-
-    // Output file
-    args.push(outputPath);
-
-    console.log('FFmpeg command:', ffmpegPath, args.join(' '));
-
-    const ffmpeg = spawn(ffmpegPath, args);
-
-    let errorOutput = '';
-
-    ffmpeg.stderr.on('data', (data) => {
-      const output = data.toString();
-      errorOutput += output;
-      
-      // Parse progress from FFmpeg output
-      const progressMatch = output.match(/frame=\s*(\d+)/);
-      if (progressMatch) {
-        const frame = parseInt(progressMatch[1]);
-        const totalFrames = Math.ceil((project.duration / 1000) * settings.fps);
-        const progress = Math.min(100, (frame / totalFrames) * 100);
-        
-        console.log(`Progress: ${progress.toFixed(1)}%`);
-      }
-    });
-
-    ffmpeg.on('close', (code) => {
-      if (code === 0) {
-        console.log('FFmpeg encoding completed successfully');
-        resolve(outputPath);
-      } else {
-        console.error('FFmpeg encoding failed:', errorOutput);
-        reject(new Error(`FFmpeg failed with code ${code}: ${errorOutput}`));
-      }
-    });
-
-    ffmpeg.on('error', (error) => {
-      console.error('FFmpeg spawn error:', error);
-      reject(error);
-    });
-  });
-}
-
-async function cleanupTempFiles(tempDir: string): Promise<void> {
-  try {
-    const files = fs.readdirSync(tempDir);
-    for (const file of files) {
-      fs.unlinkSync(path.join(tempDir, file));
-    }
-    fs.rmdirSync(tempDir);
-  } catch (error) {
-    console.warn('Failed to cleanup temp files:', error);
+function ensureDirectory(dirPath: string) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
   }
 }
+
+function createOutputFilename(projectName: string | undefined, format: SupportedFormat) {
+  const safeName = projectName
+    ? projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    : 'video';
+  const timestamp = Date.now();
+  return `${safeName || 'video'}-${timestamp}.${format}`;
+}
+
+function resolveCodec(requested: SupportedCodec | undefined): SupportedCodec {
+  if (requested === 'h265') {
+    return 'h265';
+  }
+
+  return 'h264';
+}
+
+function resolveAudioCodec(codec: SupportedCodec, includeAudio?: boolean) {
+  if (!includeAudio) {
+    return null;
+  }
+
+  if (codec === 'h264' || codec === 'h265') {
+    return 'aac';
+  }
+
+  return 'aac';
+}
+
+function isSupportedFormat(format: unknown): format is SupportedFormat {
+  return typeof format === 'string' && SUPPORTED_FORMATS.includes(format as SupportedFormat);
+}
+
+function deriveExtension(filename: string, mime: string) {
+  const ext = path.extname(filename);
+  if (ext) {
+    return ext;
+  }
+
+  if (mime && MIME_EXTENSION_MAP[mime]) {
+    return MIME_EXTENSION_MAP[mime];
+  }
+
+  if (mime.startsWith('image/')) {
+    return '.' + mime.split('/')[1];
+  }
+
+  if (mime.startsWith('audio/')) {
+    return '.' + mime.split('/')[1];
+  }
+
+  return '';
+}
+
