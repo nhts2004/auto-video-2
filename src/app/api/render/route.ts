@@ -77,7 +77,7 @@ async function renderVideoServerSide(project: any, options: any, encoder: string
     await renderMedia({
       composition,
       serveUrl: bundleLocation,
-      codec: 'png',
+      imageFormat: 'png',
       outputLocation: path.join(tempDir, 'frame-%d.png'),
       inputProps: { project },
     });

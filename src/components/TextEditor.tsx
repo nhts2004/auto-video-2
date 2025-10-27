@@ -11,7 +11,7 @@ interface TextEditorProps {
 }
 
 export default function TextEditor({ clip, onClose }: TextEditorProps) {
-  const { updateClip, applyStyleToTrack } = useProjectStore();
+  const { updateClip, applyStyleAndTransformToTrack } = useProjectStore();
   const [localClip, setLocalClip] = useState<TextClip>(clip);
   const [showSuccess, setShowSuccess] = useState(false);
 
@@ -161,7 +161,7 @@ export default function TextEditor({ clip, onClose }: TextEditorProps) {
 
       <div className="p-4 border-t relative">
         <button
-          onClick={handleApplyStyleToTrack}
+          onClick={handleApplyToTrack}
           className="w-full py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
         >
           Apply to All in Track
