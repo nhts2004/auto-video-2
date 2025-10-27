@@ -155,18 +155,20 @@ async function parseMultipartPayload(formData: FormData): Promise<PreparedPayloa
   };
 
   if (Array.isArray(projectCopy.tracks)) {
-    projectCopy.tracks = projectCopy.tracks.map((track) => {
+    type Track = { clips?: Array<{ type?: string; src?: string }>; [key: string]: any };
+
+    projectCopy.tracks = projectCopy.tracks.map((track: Track) => {
       if (!Array.isArray(track.clips)) {
         return track;
       }
 
       return {
         ...track,
-        clips: track.clips.map((clip) => {
+        clips: track.clips.map((clip: { type?: string; src?: string } & Record<string, any>) => {
           if (clip.type === 'image' || clip.type === 'audio') {
             return {
               ...clip,
-              src: replaceSrc((clip as { src?: string }).src),
+              src: replaceSrc(clip.src),
             };
           }
           return clip;
@@ -212,22 +214,18 @@ async function renderVideoServerSide(project: ProjectPayload, options: RenderOpt
 
     await renderMedia({
       serveUrl: bundleLocation,
-      composition,
-      inputProps: { project },
       codec,
       audioCodec,
+      composition,
       muted: options.includeAudio === false,
       outputLocation: outputPath,
       imageFormat: 'png',
       jpegQuality: 95,
-      pixelFormat: options.settings?.pixelFormat ?? 'yuv420p',
+      pixelFormat: options.settings?.pixelFormat as 'yuv420p' ?? 'yuv420p',
       crf: options.settings?.crf,
       overwrite: true,
       dumpBrowserLogs: true,
       logLevel: 'info',
-      chromiumOptions: {
-        args: ['--allow-file-access-from-files'],
-      },
     });
 
     return outputPath;

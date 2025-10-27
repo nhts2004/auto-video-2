@@ -10,21 +10,38 @@ import AutoLayout from '@/components/AutoLayout';
 import ResponsiveLayout from '@/components/ResponsiveLayout';
 import LayoutEditor from '@/components/LayoutEditor';
 import ExportPanel from '@/components/ExportPanel';
+import TextEditor from '@/components/TextEditor';
+import ImageEditor from '@/components/ImageEditor';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Clip, TextClip, ImageClip } from '@/types';
 
 export default function Home() {
-  const { currentProject, createProject, autoLayoutTimeline, importedFiles } = useProjectStore();
+  const {
+    currentProject,
+    createProject,
+    autoLayoutTimeline,
+    importedFiles,
+    selectedClips,
+    deselectAllClips
+  } = useProjectStore();
   const [showImportPanel, setShowImportPanel] = useState(false);
 
   const handleCreateProject = (aspectRatio: '16:9' | '9:16') => {
     createProject('New Project', aspectRatio);
   };
 
-  const handleAutoLayout = () => {
-    if (importedFiles.length > 0) {
-      autoLayoutTimeline();
+  const getSelectedClip = (): Clip | null => {
+    if (!currentProject || selectedClips.length !== 1) {
+      return null;
     }
+    for (const track of currentProject.tracks) {
+      const clip = track.clips.find(c => c.id === selectedClips[0]);
+      if (clip) return clip;
+    }
+    return null;
   };
+
+  const selectedClip = getSelectedClip();
 
   if (!currentProject) {
     return (
@@ -103,35 +120,54 @@ export default function Home() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Sidebar */}
         <div className="w-80 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-y-auto">
-          {/* Auto Layout Panel */}
           <div className="p-4 border-b border-gray-200 dark:border-gray-700">
             <AutoLayout />
           </div>
-          
-          {/* Responsive Layout Panel */}
           <div className="p-4 border-b border-gray-200 dark:border-gray-700">
             <ResponsiveLayout />
           </div>
-          
-          {/* Layout Editor */}
           <div className="p-4 border-b border-gray-200 dark:border-gray-700">
             <LayoutEditor />
           </div>
-
-          {/* Export Panel */}
           <div className="p-4 border-b border-gray-200 dark:border-gray-700">
             <ExportPanel />
           </div>
-          
-          {/* Preview Panel - moved to main area above timeline */}
         </div>
 
-        {/* Main Panel: Preview above Timeline */}
+        {/* Center Panel: Editor */}
+        <AnimatePresence>
+          {selectedClip && (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 400, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+              className="border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-y-auto"
+            >
+              {selectedClip.type === 'text' && (
+                <TextEditor
+                  key={selectedClip.id}
+                  clip={selectedClip as TextClip}
+                  onClose={deselectAllClips}
+                />
+              )}
+              {selectedClip.type === 'image' && (
+                <ImageEditor
+                  key={selectedClip.id}
+                  clip={selectedClip as ImageClip}
+                  onClose={deselectAllClips}
+                />
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Main Panel: Preview and Timeline */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700 shrink-0">
+          <div className="flex-[3] p-2 border-b border-gray-200 dark:border-gray-700 shrink-0 flex items-center justify-center bg-gray-200 dark:bg-gray-950">
             <PreviewPanel />
           </div>
-          <div className="flex-1 min-h-0 flex flex-col">
+          <div className="flex-[2] min-h-0 flex flex-col">
             <Toolbar />
             <div className="flex-1 min-h-0 overflow-hidden">
               <Timeline />

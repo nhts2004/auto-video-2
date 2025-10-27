@@ -27,6 +27,7 @@ interface ProjectState {
   // Render/Export state
   isRendering: boolean;
   renderProgress: number;
+  renderError: string | null;
   renderSettings: RenderSettings;
   exportOptions: ExportOptions;
   
@@ -47,6 +48,7 @@ interface ProjectState {
   addClip: (trackId: string, clip: Omit<Clip, 'id'>) => void;
   removeClip: (trackId: string, clipId: string) => void;
   updateClip: (trackId: string, clipId: string, updates: Partial<Clip>) => void;
+  applyStyleToTrack: (trackId: string, style: Partial<TextClip['style']>) => void;
   moveClip: (fromTrackId: string, toTrackId: string, clipId: string, newStart: number) => void;
   
   // Auto-timeline
@@ -64,6 +66,7 @@ interface ProjectState {
   // Render/Export
   startRender: (options: ExportOptions) => Promise<void>;
   cancelRender: () => void;
+  clearRenderError: () => void;
   updateRenderProgress: (progress: number) => void;
   setRenderSettings: (settings: RenderSettings) => void;
   // Project-level updates
@@ -99,16 +102,17 @@ export const useProjectStore = create<ProjectState>()(
     zoom: 1,
     isRendering: false,
     renderProgress: 0,
+    renderError: null,
     renderSettings: defaultRenderSettings,
     exportOptions: defaultExportOptions,
 
     // Project management
     createProject: (name: string, aspectRatio: '16:9' | '9:16') => {
       set((state) => {
-        const resolution = aspectRatio === '16:9' 
+        const resolution = aspectRatio === '16:9'
           ? { width: 1920, height: 1080 }
           : { width: 1080, height: 1920 };
-          
+
         state.currentProject = {
           id: Date.now().toString(),
           name,
@@ -141,7 +145,7 @@ export const useProjectStore = create<ProjectState>()(
     importSRT: async (file: File) => {
       const content = await file.text();
       const subtitles = parseSRT(content);
-      
+
       set((state) => {
         const importedFile: ImportedFile = {
           id: Date.now().toString(),
@@ -182,13 +186,14 @@ export const useProjectStore = create<ProjectState>()(
         };
         state.importedFiles.push(importedFile);
 
+        // Set as project audio if it's the first audio file
         if (state.currentProject && !state.currentProject.audioFile) {
           state.currentProject.audioFile = url;
         }
       });
     },
 
-removeFile: (fileId: string) => {
+    removeFile: (fileId: string) => {
       set((state) => {
         state.importedFiles = state.importedFiles.filter(file => file.id !== fileId);
       });
@@ -198,7 +203,7 @@ removeFile: (fileId: string) => {
     addTrack: (type: 'text' | 'image' | 'audio', name: string) => {
       set((state) => {
         if (!state.currentProject) return;
-        
+
         const track: Track = {
           id: Date.now().toString(),
           type,
@@ -207,7 +212,7 @@ removeFile: (fileId: string) => {
           muted: false,
           locked: false
         };
-        
+
         state.currentProject.tracks.push(track);
       });
     },
@@ -222,15 +227,15 @@ removeFile: (fileId: string) => {
     addClip: (trackId: string, clipData: Omit<Clip, 'id'>) => {
       set((state) => {
         if (!state.currentProject) return;
-        
+
         const track = state.currentProject.tracks.find(t => t.id === trackId);
         if (!track) return;
-        
+
         const clip: Clip = {
           ...clipData,
           id: Date.now().toString()
         } as Clip;
-        
+
         track.clips.push(clip);
       });
     },
@@ -238,10 +243,10 @@ removeFile: (fileId: string) => {
     removeClip: (trackId: string, clipId: string) => {
       set((state) => {
         if (!state.currentProject) return;
-        
+
         const track = state.currentProject.tracks.find(t => t.id === trackId);
         if (!track) return;
-        
+
         track.clips = track.clips.filter(clip => clip.id !== clipId);
       });
     },
@@ -249,13 +254,13 @@ removeFile: (fileId: string) => {
     updateClip: (trackId: string, clipId: string, updates: Partial<Clip>) => {
       set((state) => {
         if (!state.currentProject) return;
-        
+
         const track = state.currentProject.tracks.find(t => t.id === trackId);
         if (!track) return;
-        
+
         const clip = track.clips.find(c => c.id === clipId);
         if (!clip) return;
-        
+
         Object.assign(clip, updates);
       });
     },
@@ -263,18 +268,18 @@ removeFile: (fileId: string) => {
     moveClip: (fromTrackId: string, toTrackId: string, clipId: string, newStart: number) => {
       set((state) => {
         if (!state.currentProject) return;
-        
+
         const fromTrack = state.currentProject.tracks.find(t => t.id === fromTrackId);
         const toTrack = state.currentProject.tracks.find(t => t.id === toTrackId);
-        
+
         if (!fromTrack || !toTrack) return;
-        
+
         const clip = fromTrack.clips.find(c => c.id === clipId);
         if (!clip) return;
-        
+
         // Remove from source track
         fromTrack.clips = fromTrack.clips.filter(c => c.id !== clipId);
-        
+
         // Add to target track with new start time
         clip.start = newStart;
         clip.trackId = toTrackId;
@@ -286,11 +291,10 @@ removeFile: (fileId: string) => {
     autoLayoutTimeline: () => {
       const { currentProject, importedFiles } = get();
       if (!currentProject) return;
-      
+
       set((state) => {
         if (!state.currentProject) return;
-        
-        // Determine project duration based on available media
+
         const audioFile = importedFiles.find(f => f.type === 'audio');
         const srtFiles = importedFiles.filter(f => f.type === 'srt');
         const imageFiles = importedFiles.filter(f => f.type === 'image');
@@ -298,88 +302,68 @@ removeFile: (fileId: string) => {
         let projectDuration = state.currentProject.duration || 0;
 
         if (audioFile) {
-          // Placeholder: 3 minutes if audio present (actual duration resolved elsewhere)
           projectDuration = 180000;
           state.currentProject.audioFile = audioFile.data?.url;
         } else if (srtFiles.length > 0) {
-          // Use last subtitle end + padding
           const lastEnd = Math.max(
             ...srtFiles.flatMap((f: any) => (f.data || []).map((s: any) => s.end || 0))
           );
           projectDuration = Math.max(5000, lastEnd + 2000);
         } else if (imageFiles.length > 0) {
-          // 5 seconds per image as default
           projectDuration = imageFiles.length * 5000;
         } else {
-          projectDuration = 60000; // Default 1 minute
+          projectDuration = 60000;
         }
 
-        // Update project duration
         state.currentProject.duration = projectDuration;
-        
-        // Clear existing tracks to avoid duplicates
         state.currentProject.tracks = [];
-        
-        // Create tracks
-        const textTrack = {
-          id: 'auto-text-track',
-          type: 'text' as const,
-          name: 'Subtitles',
-          clips: [] as TextClip[],
-          muted: false,
-          locked: false
-        };
-        
-        const imageTrack = {
-          id: 'auto-image-track',
-          type: 'image' as const,
-          name: 'Images',
-          clips: [] as ImageClip[],
-          muted: false,
-          locked: false
-        };
-        
-        const audioTrack = {
-          id: 'auto-audio-track',
-          type: 'audio' as const,
-          name: 'Audio',
-          clips: [] as AudioClip[],
-          muted: false,
-          locked: false
-        };
-        
-        state.currentProject.tracks = [textTrack, imageTrack, audioTrack];
-        
-        // Process SRT files
-        if (srtFiles.length > 0) {
-          srtFiles.forEach(srtFile => {
-            if (srtFile.data) {
-              srtFile.data.forEach((subtitle: any, index: number) => {
-                const textClip: TextClip = {
-                  id: `auto-text-${srtFile.id}-${index}`,
-                  type: 'text',
-                  start: subtitle.start,
-                  end: subtitle.end,
-                  text: subtitle.text,
-                  position: { x: 50, y: 80 },
-                  transform: { scale: 1, rotation: 0 },
-                  style: {
-                    fontSize: 36,
-                    fontFamily: 'Arial',
-                    color: '#ffffff',
-                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                    writingMode: 'horizontal-tb'
-                  },
-                  trackId: textTrack.id
-                };
-                textTrack.clips.push(textClip);
-              });
-            }
-          });
-        }
-        
-        // Process image files
+
+        // Create a new track for each SRT file
+        srtFiles.forEach(srtFile => {
+          const textTrack: Track = {
+            id: `track-${srtFile.id}`,
+            type: 'text',
+            name: srtFile.name,
+            clips: [],
+            muted: false,
+            locked: false
+          };
+
+          if (srtFile.data) {
+            srtFile.data.forEach((subtitle: any, index: number) => {
+              const textClip: TextClip = {
+                id: `clip-${srtFile.id}-${index}`,
+                type: 'text',
+                start: subtitle.start,
+                end: subtitle.end,
+                text: subtitle.text,
+                position: { x: 50, y: 80 },
+                transform: { scale: 1, rotation: 0 },
+                style: {
+                  fontSize: 36,
+                  fontFamily: 'Arial',
+                  color: '#ffffff',
+                  backgroundColor: '#00000080',
+                  writingMode: 'horizontal-tb'
+                },
+                trackId: textTrack.id
+              };
+              textTrack.clips.push(textClip);
+            });
+          }
+          state.currentProject!.tracks.push(textTrack);
+        });
+
+        // Create one track for all images
         if (imageFiles.length > 0) {
+          const imageTrack: Track = {
+            id: 'auto-image-track',
+            type: 'image',
+            name: 'Images',
+            clips: [],
+            muted: false,
+            locked: false
+          };
           const imageDuration = (state.currentProject.duration || 60000) / imageFiles.length;
           imageFiles.forEach((imageFile, index) => {
             const imageClip: ImageClip = {
@@ -394,10 +378,19 @@ removeFile: (fileId: string) => {
             };
             imageTrack.clips.push(imageClip);
           });
+          state.currentProject!.tracks.push(imageTrack);
         }
-        
-        // Process audio file
+
+        // Create one track for audio
         if (audioFile) {
+          const audioTrack: Track = {
+            id: 'auto-audio-track',
+            type: 'audio',
+            name: 'Audio',
+            clips: [],
+            muted: false,
+            locked: false
+          };
           const audioClip: AudioClip = {
             id: 'auto-audio-main',
             type: 'audio',
@@ -408,6 +401,7 @@ removeFile: (fileId: string) => {
             trackId: audioTrack.id
           };
           audioTrack.clips.push(audioClip);
+          state.currentProject!.tracks.push(audioTrack);
         }
       });
     },
@@ -460,6 +454,7 @@ removeFile: (fileId: string) => {
       set((state) => {
         state.isRendering = true;
         state.renderProgress = 0;
+        state.renderError = null;
         state.exportOptions = options;
       });
 
@@ -520,6 +515,7 @@ removeFile: (fileId: string) => {
         set((state) => {
           state.isRendering = false;
           state.renderProgress = 0;
+          state.renderError = error instanceof Error ? error.message : 'An unknown error occurred';
         });
       }
     },
@@ -528,6 +524,13 @@ removeFile: (fileId: string) => {
       set((state) => {
         state.isRendering = false;
         state.renderProgress = 0;
+        state.renderError = null;
+      });
+    },
+
+    clearRenderError: () => {
+      set((state) => {
+        state.renderError = null;
       });
     },
 
@@ -553,35 +556,46 @@ removeFile: (fileId: string) => {
           updatedAt: new Date()
         } as Project;
       });
-    }
+    },
+
+    // Apply style to all clips in a text track
+    applyStyleToTrack: (trackId: string, style: Partial<TextClip['style']>) => {
+      set((state) => {
+        if (!state.currentProject) return;
+
+        const track = state.currentProject.tracks.find(t => t.id === trackId);
+        if (!track || track.type !== 'text') return;
+
+        track.clips.forEach(clip => {
+          if (clip.type === 'text') {
+            clip.style = { ...clip.style, ...style };
+          }
+        });
+      });
+    },
   }))
 );
 
 // Helper function to parse SRT content
-
 function parseSRT(content: string) {
   const subtitles = [];
-  // Normalize line endings to \n
   const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  // Split on blank lines (one or more)
   const blocks = normalized.trim().split(/\n{2,}/);
-  
+
   for (const block of blocks) {
     const lines = block.trim().split('\n');
-    if (lines.length < 3) continue;
-    
-    const id = parseInt(lines[0]);
+    if (lines.length < 2) continue;
+
     const timeMatch = lines[1].match(/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/);
-    
     if (!timeMatch) continue;
-    
+
     const start = parseTimeToMs(timeMatch[1]);
     const end = parseTimeToMs(timeMatch[2]);
     const text = lines.slice(2).join('\n');
-    
-    subtitles.push({ id, start, end, text });
+
+    subtitles.push({ id: subtitles.length + 1, start, end, text });
   }
-  
+
   return subtitles;
 }
 

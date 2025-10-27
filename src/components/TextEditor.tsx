@@ -12,7 +12,7 @@ interface TextEditorProps {
 }
 
 export default function TextEditor({ clip, onClose }: TextEditorProps) {
-  const { updateClip } = useProjectStore();
+  const { updateClip, applyStyleToTrack } = useProjectStore();
   const [localClip, setLocalClip] = useState<TextClip>(clip);
 
   useEffect(() => {
@@ -299,7 +299,17 @@ export default function TextEditor({ clip, onClose }: TextEditorProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end space-x-3 p-6 border-t border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between p-6 border-t border-gray-200 dark:border-gray-700">
+          <button
+            onClick={() => {
+              if (applyStyleToTrack) {
+                applyStyleToTrack(clip.trackId, localClip.style);
+              }
+            }}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+          >
+            Apply Style to Track
+          </button>
           <button
             onClick={onClose}
             className="px-4 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
@@ -311,3 +321,4 @@ export default function TextEditor({ clip, onClose }: TextEditorProps) {
     </motion.div>
   );
 }
+
