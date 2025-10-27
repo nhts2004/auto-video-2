@@ -1,47 +1,47 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { 
-  Project, 
-  Track, 
-  Clip, 
-  TextClip, 
-  ImageClip, 
-  AudioClip, 
+import {
+  Project,
+  Track,
+  Clip,
+  TextClip,
+  ImageClip,
+  AudioClip,
   ImportedFile,
   RenderSettings,
-  ExportOptions 
+  ExportOptions
 } from '@/types';
 
 interface ProjectState {
   // Project data
   currentProject: Project | null;
   importedFiles: ImportedFile[];
-  
+
   // UI state
   selectedClips: string[];
   selectedTrack: string | null;
   isPlaying: boolean;
   currentTime: number;
   zoom: number;
-  
+
   // Render/Export state
   isRendering: boolean;
   renderProgress: number;
   renderError: string | null;
   renderSettings: RenderSettings;
   exportOptions: ExportOptions;
-  
+
   // Actions
   createProject: (name: string, aspectRatio: '16:9' | '9:16') => void;
   loadProject: (project: Project) => void;
   saveProject: () => void;
-  
+
   // File management
   importSRT: (file: File) => Promise<void>;
   importImage: (file: File) => Promise<void>;
   importAudio: (file: File) => Promise<void>;
   removeFile: (fileId: string) => void;
-  
+
   // Timeline operations
   addTrack: (type: 'text' | 'image' | 'audio', name: string) => void;
   removeTrack: (trackId: string) => void;
@@ -50,10 +50,10 @@ interface ProjectState {
   updateClip: (trackId: string, clipId: string, updates: Partial<Clip>) => void;
   applyStyleToTrack: (trackId: string, style: Partial<TextClip['style']>) => void;
   moveClip: (fromTrackId: string, toTrackId: string, clipId: string, newStart: number) => void;
-  
+
   // Auto-timeline
   autoLayoutTimeline: () => void;
-  
+
   // UI actions
   selectClip: (clipId: string) => void;
   selectMultipleClips: (clipIds: string[]) => void;
@@ -62,7 +62,7 @@ interface ProjectState {
   setCurrentTime: (time: number) => void;
   setZoom: (zoom: number) => void;
   togglePlayback: () => void;
-  
+
   // Render/Export
   startRender: (options: ExportOptions) => Promise<void>;
   cancelRender: () => void;
@@ -265,6 +265,21 @@ export const useProjectStore = create<ProjectState>()(
       });
     },
 
+    applyStyleToTrack: (trackId: string, style: Partial<TextClip['style']>) => {
+      set((state) => {
+        if (!state.currentProject) return;
+
+        const track = state.currentProject.tracks.find(t => t.id === trackId);
+        if (!track || track.type !== 'text') return;
+
+        track.clips.forEach(clip => {
+          if (clip.type === 'text') {
+            clip.style = { ...clip.style, ...style };
+          }
+        });
+      });
+    },
+
     moveClip: (fromTrackId: string, toTrackId: string, clipId: string, newStart: number) => {
       set((state) => {
         if (!state.currentProject) return;
@@ -459,48 +474,45 @@ export const useProjectStore = create<ProjectState>()(
       });
 
       try {
-        const { currentProject, importedFiles } = get();
+        const { currentProject } = get();
         if (!currentProject) throw new Error('No project loaded');
 
-        const projectPayload =
-          typeof structuredClone === 'function'
-            ? structuredClone(currentProject)
-            : JSON.parse(JSON.stringify(currentProject));
-
-        const formData = new FormData();
-        formData.append('project', JSON.stringify(projectPayload));
-        formData.append(
-          'options',
-          JSON.stringify({
-            format: options.format,
-            settings: options.settings,
-            includeAudio: options.includeAudio,
-          }),
-        );
-
-        const manifest = importedFiles.map((file) => ({
-          id: file.id,
-          type: file.type,
-          previewUrl: file.data?.url ?? null,
-          name: file.name,
-        }));
-        formData.append('manifest', JSON.stringify(manifest));
-
-        importedFiles.forEach((file) => {
-          formData.append(`file_${file.id}`, file.file, file.name);
-        });
+        // Call API route for rendering (server-side)
+        // Create a serializable version of the project
+        const serializableProject = {
+          ...currentProject,
+          tracks: currentProject.tracks.map(track => ({
+            ...track,
+            clips: track.clips.map(clip => {
+              const { file, ...restOfClip } = (clip as any);
+              return restOfClip;
+            })
+          }))
+        };
 
         const response = await fetch('/api/render', {
           method: 'POST',
-          body: formData,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            project: serializableProject,
+            options: {
+              format: options.format,
+              settings: options.settings,
+              includeAudio: options.includeAudio
+            }
+          }),
         });
 
         if (!response.ok) {
-          throw new Error('Render request failed');
+          const errorData = await response.json();
+          throw new Error(errorData.details || 'Render request failed');
         }
 
+        // Simulate progress for now (in real implementation, you'd use WebSocket or polling)
         for (let i = 0; i <= 100; i += 10) {
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await new Promise(resolve => setTimeout(resolve, 200));
           get().updateRenderProgress(i);
         }
 
@@ -510,6 +522,7 @@ export const useProjectStore = create<ProjectState>()(
           state.isRendering = false;
           state.renderProgress = 100;
         });
+
       } catch (error) {
         console.error('Render failed:', error);
         set((state) => {
@@ -524,7 +537,6 @@ export const useProjectStore = create<ProjectState>()(
       set((state) => {
         state.isRendering = false;
         state.renderProgress = 0;
-        state.renderError = null;
       });
     },
 
@@ -556,23 +568,7 @@ export const useProjectStore = create<ProjectState>()(
           updatedAt: new Date()
         } as Project;
       });
-    },
-
-    // Apply style to all clips in a text track
-    applyStyleToTrack: (trackId: string, style: Partial<TextClip['style']>) => {
-      set((state) => {
-        if (!state.currentProject) return;
-
-        const track = state.currentProject.tracks.find(t => t.id === trackId);
-        if (!track || track.type !== 'text') return;
-
-        track.clips.forEach(clip => {
-          if (clip.type === 'text') {
-            clip.style = { ...clip.style, ...style };
-          }
-        });
-      });
-    },
+    }
   }))
 );
 

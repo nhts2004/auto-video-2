@@ -7,8 +7,10 @@ import ffmpegStatic from 'ffmpeg-static';
 import fs from 'fs';
 
 export async function POST(request: NextRequest) {
+  let requestBody;
   try {
-    const { project, options } = await request.json();
+    requestBody = await request.text();
+    const { project, options } = JSON.parse(requestBody);
 
     if (!project || !options) {
       return NextResponse.json({ error: 'Invalid request data', details: 'Project or options missing.' }, { status: 400 });
@@ -27,6 +29,12 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[API_ERROR] Full error:', error);
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred during render.';
+
+    // If JSON parsing fails, log the raw body
+    if (error instanceof SyntaxError) {
+      console.error("Failed to parse JSON. Raw request body:", requestBody);
+    }
+
     return NextResponse.json({
       error: 'Render failed',
       details: errorMessage
@@ -77,6 +85,7 @@ async function renderVideoServerSide(project: any, options: any) {
       await renderMedia({
         composition,
         serveUrl: bundleLocation,
+        codec: 'png', // Output frames as PNG
         outputLocation: framePattern,
         imageFormat: 'png',
         scale: 1,
@@ -102,7 +111,7 @@ async function renderVideoServerSide(project: any, options: any) {
         format: options.format,
         settings: options.settings,
         includeAudio: options.includeAudio,
-        audioPath: project.audioFile, // This is still a blob URL, may fail.
+        audioPath: project.audioFile,
         project
       });
       console.log('FFmpeg encoding complete.');
@@ -130,13 +139,9 @@ async function encodeWithFFmpeg(options: any): Promise<string> {
       '-i', framePattern,
     ];
 
-    // NOTE: audioPath is likely a blob: URL and will not work on the server.
-    // This part of the logic needs a more robust solution like uploading the audio file.
-    // For now, we proceed assuming it might be a local path for debugging.
     if (includeAudio && audioPath) {
-      // A simple check to see if it's a blob URL
       if (audioPath.startsWith('blob:')) {
-        console.warn(`Audio path is a blob URL ('${audioPath}'), which is inaccessible to the server. Skipping audio.`);
+        console.warn(`Audio path is a blob URL ('${audioPath}'), skipping audio.`);
       } else if (fs.existsSync(audioPath)) {
         args.push('-i', audioPath);
       } else {
@@ -145,7 +150,7 @@ async function encodeWithFFmpeg(options: any): Promise<string> {
     }
 
     args.push(
-      '-c:v', 'libx24',
+      '-c:v', 'libx264',
       '-pix_fmt', settings.pixelFormat || 'yuv420p',
       '-profile:v', settings.profile || 'high',
       '-crf', (settings.crf || 18).toString(),
