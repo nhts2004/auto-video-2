@@ -65,10 +65,8 @@ async function renderVideoServerSide(project: any, options: any) {
     await renderMedia({
       composition,
       serveUrl: bundleLocation,
-      codec: 'h264',            // hoặc 'vp9' | 'gif' | 'prores' ...
-      outputLocation: 'out/video.mp4',
-      imageFormat: 'png',       // OK: khung nguồn là PNG
-      jpegQuality: 95,          // chỉ áp dụng khi imageFormat = 'jpeg'
+      outputLocation: framePattern,
+      imageFormat: 'png',
       scale: 1,
       inputProps: { project },
     });
