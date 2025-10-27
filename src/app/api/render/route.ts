@@ -10,14 +10,11 @@ export async function POST(request: NextRequest) {
   try {
     const { project, options } = await request.json();
 
-    // Validate request
     if (!project || !options) {
-      return NextResponse.json({ error: 'Invalid request data' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid request data', details: 'Project or options missing.' }, { status: 400 });
     }
 
-    console.log('Render request received:', { project: project.name, options });
-
-    // Execute server-side rendering pipeline
+    console.log('Render request received for project:', project.name);
     const outputPath = await renderVideoServerSide(project, options);
     const filename = path.basename(outputPath);
 
@@ -28,184 +25,166 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Render error:', error);
-    return NextResponse.json({ 
-      error: 'Render failed', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
+    console.error('[API_ERROR] Full error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred during render.';
+    return NextResponse.json({
+      error: 'Render failed',
+      details: errorMessage
     }, { status: 500 });
   }
 }
 
-// Alternative: Move renderVideo function here (server-side only)
 async function renderVideoServerSide(project: any, options: any) {
+  let bundleLocation: string | null = null;
+  let tempDir: string | null = null;
+
   try {
     // Step 1: Bundle Remotion composition
-    console.log('Bundling Remotion composition...');
-    const bundleLocation = await bundle({
-      entryPoint: path.resolve('./src/compositions/registerRoot.tsx'),
-      webpackOverride: (config) => config,
-    });
+    try {
+      console.log('Step 1/4: Bundling Remotion composition...');
+      bundleLocation = await bundle({
+        entryPoint: path.resolve('./src/compositions/registerRoot.tsx'),
+        webpackOverride: (config) => config,
+      });
+      console.log('Bundling complete.');
+    } catch (err) {
+      throw new Error(`Remotion bundling failed: ${(err as Error).message}`);
+    }
 
     // Step 2: Select composition
-    const composition = await selectComposition({
-      serveUrl: bundleLocation,
-      id: 'MainComposition',
-      inputProps: { project },
-    });
+    let composition;
+    try {
+      console.log('Step 2/4: Selecting composition...');
+      composition = await selectComposition({
+        serveUrl: bundleLocation,
+        id: 'MainComposition',
+        inputProps: { project },
+      });
+      console.log('Composition selected.');
+    } catch (err) {
+      throw new Error(`Failed to select Remotion composition: ${(err as Error).message}`);
+    }
 
     // Step 3: Render frames with Remotion
-    console.log('Rendering frames with Remotion...');
-    const tempDir = path.join(process.cwd(), 'temp-frames');
+    tempDir = path.join(process.cwd(), 'temp-frames', `render-${Date.now()}`);
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
     }
-
     const framePattern = path.join(tempDir, 'frame-%d.png');
 
-    await renderMedia({
-      composition,
-      serveUrl: bundleLocation,
-      outputLocation: framePattern,
-      imageFormat: 'png',
-      scale: 1,
-      inputProps: { project },
-    });
-    
+    try {
+      console.log('Step 3/4: Rendering frames with Remotion...');
+      await renderMedia({
+        composition,
+        serveUrl: bundleLocation,
+        outputLocation: framePattern,
+        imageFormat: 'png',
+        scale: 1,
+        inputProps: { project },
+      });
+      console.log('Frame rendering complete.');
+    } catch (err) {
+      throw new Error(`Remotion 'renderMedia' failed: ${(err as Error).message}`);
+    }
 
     // Step 4: Encode with FFmpeg
-    console.log('Encoding with FFmpeg...');
-    const timestamp = Date.now();
-    const outputPath = path.join(process.cwd(), 'export', `video_${timestamp}.${options.format}`);
-    
-    // Ensure export directory exists
     const exportDir = path.join(process.cwd(), 'export');
     if (!fs.existsSync(exportDir)) {
       fs.mkdirSync(exportDir, { recursive: true });
     }
+    const outputPath = path.join(exportDir, `video_${Date.now()}.${options.format}`);
 
-    const finalOutputPath = await encodeWithFFmpeg({
-      framePattern,
-      outputPath,
-      format: options.format,
-      settings: options.settings,
-      includeAudio: options.includeAudio,
-      audioPath: project.audioFile,
-      project
-    });
-
+    try {
+      console.log('Step 4/4: Encoding with FFmpeg...');
+      const finalOutputPath = await encodeWithFFmpeg({
+        framePattern,
+        outputPath,
+        format: options.format,
+        settings: options.settings,
+        includeAudio: options.includeAudio,
+        audioPath: project.audioFile, // This is still a blob URL, may fail.
+        project
+      });
+      console.log('FFmpeg encoding complete.');
+      return finalOutputPath;
+    } catch (err) {
+      throw new Error(`FFmpeg encoding failed: ${(err as Error).message}`);
+    }
+  } finally {
     // Cleanup temp files
-    console.log('Cleaning up temporary files...');
-    await cleanupTempFiles(tempDir);
-
-    return finalOutputPath;
-
-  } catch (error) {
-    console.error('Render error:', error);
-    throw error;
+    if (tempDir && fs.existsSync(tempDir)) {
+      console.log('Cleaning up temporary files...');
+      await cleanupTempFiles(tempDir);
+    }
   }
 }
 
-async function encodeWithFFmpeg(options: {
-  framePattern: string;
-  outputPath: string;
-  format: 'mp4' | 'mov';
-  settings: any;
-  includeAudio: boolean;
-  audioPath?: string;
-  project: any;
-}): Promise<string> {
-  const {
-    framePattern,
-    outputPath,
-    format,
-    settings,
-    includeAudio,
-    audioPath,
-    project
-  } = options;
-
+async function encodeWithFFmpeg(options: any): Promise<string> {
   return new Promise((resolve, reject) => {
+    const { framePattern, outputPath, settings, includeAudio, audioPath, project } = options;
     const ffmpegPath = ffmpegStatic as string;
-    
-    // Build FFmpeg command
+
     const args = [
-      '-y', // Overwrite output file
+      '-y',
       '-framerate', settings.fps.toString(),
       '-i', framePattern,
     ];
 
-    // Add audio if provided
-    if (includeAudio && audioPath && fs.existsSync(audioPath)) {
-      args.push('-i', audioPath);
+    // NOTE: audioPath is likely a blob: URL and will not work on the server.
+    // This part of the logic needs a more robust solution like uploading the audio file.
+    // For now, we proceed assuming it might be a local path for debugging.
+    if (includeAudio && audioPath) {
+      // A simple check to see if it's a blob URL
+      if (audioPath.startsWith('blob:')) {
+        console.warn(`Audio path is a blob URL ('${audioPath}'), which is inaccessible to the server. Skipping audio.`);
+      } else if (fs.existsSync(audioPath)) {
+        args.push('-i', audioPath);
+      } else {
+        console.warn(`Audio file not found at path: ${audioPath}. Skipping audio.`);
+      }
     }
 
-    // Video encoding settings
     args.push(
-      '-c:v', 'libx264',
-      '-pix_fmt', settings.pixelFormat,
-      '-profile:v', settings.profile,
-      '-crf', settings.crf.toString(),
+      '-c:v', 'libx24',
+      '-pix_fmt', settings.pixelFormat || 'yuv420p',
+      '-profile:v', settings.profile || 'high',
+      '-crf', (settings.crf || 18).toString(),
       '-preset', 'medium',
       '-movflags', '+faststart'
     );
 
-    // Audio settings
-    if (includeAudio && audioPath) {
-      args.push(
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-shortest' // End when shortest input ends
-      );
+    if (includeAudio && audioPath && !audioPath.startsWith('blob:')) {
+      args.push('-c:a', 'aac', '-b:a', '128k', '-shortest');
     }
 
-    // Output file
     args.push(outputPath);
 
-    console.log('FFmpeg command:', ffmpegPath, args.join(' '));
+    console.log('Executing FFmpeg command:', ffmpegPath, args.join(' '));
 
     const ffmpeg = spawn(ffmpegPath, args);
-
     let errorOutput = '';
-
     ffmpeg.stderr.on('data', (data) => {
-      const output = data.toString();
-      errorOutput += output;
-      
-      // Parse progress from FFmpeg output
-      const progressMatch = output.match(/frame=\s*(\d+)/);
-      if (progressMatch) {
-        const frame = parseInt(progressMatch[1]);
-        const totalFrames = Math.ceil((project.duration / 1000) * settings.fps);
-        const progress = Math.min(100, (frame / totalFrames) * 100);
-        
-        console.log(`Progress: ${progress.toFixed(1)}%`);
-      }
+      errorOutput += data.toString();
     });
 
     ffmpeg.on('close', (code) => {
       if (code === 0) {
-        console.log('FFmpeg encoding completed successfully');
         resolve(outputPath);
       } else {
-        console.error('FFmpeg encoding failed:', errorOutput);
-        reject(new Error(`FFmpeg failed with code ${code}: ${errorOutput}`));
+        reject(new Error(`FFmpeg process exited with code ${code}. Stderr: ${errorOutput}`));
       }
     });
 
-    ffmpeg.on('error', (error) => {
-      console.error('FFmpeg spawn error:', error);
-      reject(error);
+    ffmpeg.on('error', (err) => {
+      reject(new Error(`Failed to spawn FFmpeg process: ${err.message}`));
     });
   });
 }
 
 async function cleanupTempFiles(tempDir: string): Promise<void> {
   try {
-    const files = fs.readdirSync(tempDir);
-    for (const file of files) {
-      fs.unlinkSync(path.join(tempDir, file));
-    }
-    fs.rmdirSync(tempDir);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    console.log(`Cleaned up directory: ${tempDir}`);
   } catch (error) {
     console.warn('Failed to cleanup temp files:', error);
   }

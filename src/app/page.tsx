@@ -93,7 +93,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex flex-col">
-      {/* Header */}
       <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
@@ -104,7 +103,6 @@ export default function Home() {
               {currentProject.aspectRatio}
             </span>
           </div>
-          
           <div className="flex items-center space-x-3">
             <button
               onClick={() => setShowImportPanel(true)}
@@ -116,71 +114,52 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar */}
+        {/* Left Sidebar (Tools) */}
         <div className="w-80 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-y-auto">
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-            <AutoLayout />
-          </div>
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-            <ResponsiveLayout />
-          </div>
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-            <LayoutEditor />
-          </div>
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-            <ExportPanel />
-          </div>
+          <div className="p-4 border-b"><AutoLayout /></div>
+          <div className="p-4 border-b"><ResponsiveLayout /></div>
+          <div className="p-4 border-b"><LayoutEditor /></div>
+          <div className="p-4"><ExportPanel /></div>
         </div>
 
-        {/* Center Panel: Editor */}
+        {/* Center Panel (Editors) */}
         <AnimatePresence>
           {selectedClip && (
             <motion.div
               initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 400, opacity: 1 }}
+              animate={{ width: 350, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-              className="border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-y-auto"
+              className="border-r border-gray-200 dark:border-gray-700 flex-shrink-0"
             >
               {selectedClip.type === 'text' && (
-                <TextEditor
-                  key={selectedClip.id}
-                  clip={selectedClip as TextClip}
-                  onClose={deselectAllClips}
-                />
+                <TextEditor key={selectedClip.id} clip={selectedClip as TextClip} onClose={deselectAllClips} />
               )}
               {selectedClip.type === 'image' && (
-                <ImageEditor
-                  key={selectedClip.id}
-                  clip={selectedClip as ImageClip}
-                  onClose={deselectAllClips}
-                />
+                <ImageEditor key={selectedClip.id} clip={selectedClip as ImageClip} onClose={deselectAllClips} />
               )}
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Main Panel: Preview and Timeline */}
+        {/* Right Panel (Preview & Timeline) */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex-[3] p-2 border-b border-gray-200 dark:border-gray-700 shrink-0 flex items-center justify-center bg-gray-200 dark:bg-gray-950">
+          {/* Preview Panel - Optimized Layout */}
+          <div className="p-4 flex-grow-[2] flex items-center justify-center bg-gray-200 dark:bg-gray-950 overflow-hidden">
             <PreviewPanel />
           </div>
-          <div className="flex-[2] min-h-0 flex flex-col">
+          {/* Timeline Panel */}
+          <div className="flex-grow-[3] min-h-0 flex flex-col border-t border-gray-200 dark:border-gray-700">
             <Toolbar />
-            <div className="flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-auto">
               <Timeline />
             </div>
           </div>
         </div>
       </div>
 
-      {/* Import Panel Modal */}
       <AnimatePresence>
-        {showImportPanel && (
-          <ImportPanel onClose={() => setShowImportPanel(false)} />
-        )}
+        {showImportPanel && <ImportPanel onClose={() => setShowImportPanel(false)} />}
       </AnimatePresence>
     </div>
   );

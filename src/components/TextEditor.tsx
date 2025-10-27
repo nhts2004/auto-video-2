@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { TextClip } from '@/types';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface TextEditorProps {
   clip: TextClip;
@@ -13,6 +13,7 @@ interface TextEditorProps {
 export default function TextEditor({ clip, onClose }: TextEditorProps) {
   const { updateClip, applyStyleToTrack } = useProjectStore();
   const [localClip, setLocalClip] = useState<TextClip>(clip);
+  const [showSuccess, setShowSuccess] = useState(false);
 
   useEffect(() => {
     setLocalClip(clip);
@@ -31,6 +32,8 @@ export default function TextEditor({ clip, onClose }: TextEditorProps) {
 
   const handleApplyStyleToTrack = () => {
     applyStyleToTrack(clip.trackId, localClip.style);
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 2000); // Hide after 2 seconds
   };
 
   const fontFamilies = [
@@ -61,20 +64,16 @@ export default function TextEditor({ clip, onClose }: TextEditorProps) {
       </div>
 
       <div className="flex-1 p-4 space-y-4 overflow-y-auto">
-        {/* Text Content */}
+        {/* Fields... */}
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Content
-          </label>
+          <label className="block text-sm font-medium">Content</label>
           <textarea
             value={localClip.text}
             onChange={(e) => handleUpdate({ text: e.target.value })}
-            className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white resize-none"
+            className="w-full p-2 border rounded-lg"
             rows={3}
           />
         </div>
-
-        {/* Font & Size */}
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
             <label className="block text-sm font-medium">Font</label>
@@ -96,57 +95,45 @@ export default function TextEditor({ clip, onClose }: TextEditorProps) {
             />
           </div>
         </div>
-
-        {/* Colors */}
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
             <label className="block text-sm font-medium">Text Color</label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="color"
-                value={localClip.style.color}
-                onChange={(e) => handleStyleUpdate({ color: e.target.value })}
-                className="w-10 h-10 border-none rounded cursor-pointer"
-              />
-              <div className="flex flex-wrap gap-1">
-                {colors.map(color => (
-                  <button
-                    key={color}
-                    onClick={() => handleStyleUpdate({ color })}
-                    className="w-6 h-6 rounded border"
-                    style={{ backgroundColor: color }}
-                  />
-                ))}
-              </div>
-            </div>
+            <input
+              type="color"
+              value={localClip.style.color}
+              onChange={(e) => handleStyleUpdate({ color: e.target.value })}
+            />
           </div>
           <div className="space-y-2">
             <label className="block text-sm font-medium">Background</label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="color"
-                value={localClip.style.backgroundColor || '#000000'}
-                onChange={(e) => handleStyleUpdate({ backgroundColor: e.target.value })}
-                className="w-10 h-10 border-none rounded cursor-pointer"
-              />
-              <button
-                onClick={() => handleStyleUpdate({ backgroundColor: 'transparent' })}
-                className="px-3 py-1 text-sm rounded"
-              >
-                Clear
-              </button>
-            </div>
+            <input
+              type="color"
+              value={localClip.style.backgroundColor || '#000000'}
+              onChange={(e) => handleStyleUpdate({ backgroundColor: e.target.value })}
+            />
           </div>
         </div>
       </div>
 
-      <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+      <div className="p-4 border-t border-gray-200 dark:border-gray-700 relative">
         <button
           onClick={handleApplyStyleToTrack}
           className="w-full py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
         >
           Apply Style to All Clips in Track
         </button>
+        <AnimatePresence>
+          {showSuccess && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-green-500 text-white text-sm rounded-md"
+            >
+              Style applied!
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
