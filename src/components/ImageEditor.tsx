@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { ImageClip } from '@/types';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface ImageEditorProps {
   clip: ImageClip;
@@ -10,12 +11,11 @@ interface ImageEditorProps {
 }
 
 export default function ImageEditor({ clip, onClose }: ImageEditorProps) {
-  const { updateClip } = useProjectStore();
+  const { updateClip, applyStyleAndTransformToTrack } = useProjectStore();
   const [localClip, setLocalClip] = useState<ImageClip>(clip);
+  const [showSuccess, setShowSuccess] = useState(false);
 
-  useEffect(() => {
-    setLocalClip(clip);
-  }, [clip]);
+  useEffect(() => { setLocalClip(clip); }, [clip]);
 
   const handleUpdate = (updates: Partial<ImageClip>) => {
     const newClip = { ...localClip, ...updates };
@@ -24,90 +24,58 @@ export default function ImageEditor({ clip, onClose }: ImageEditorProps) {
   };
 
   const handleTransformUpdate = (transformUpdates: Partial<ImageClip['transform']>) => {
-    const newTransform = { ...localClip.transform, ...transformUpdates };
-    handleUpdate({ transform: newTransform });
+    handleUpdate({ transform: { ...localClip.transform, ...transformUpdates } });
   };
 
   const handlePositionUpdate = (positionUpdates: Partial<ImageClip['position']>) => {
-    const newPosition = { ...localClip.position, ...positionUpdates };
-    handleUpdate({ position: newPosition });
+    handleUpdate({ position: { ...localClip.position, ...positionUpdates } });
+  };
+
+  const handleApplyToTrack = () => {
+    applyStyleAndTransformToTrack(clip.trackId, localClip);
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 2000);
   };
 
   return (
     <div className="bg-white dark:bg-gray-800 h-full flex flex-col">
-      <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-          Edit Image
-        </h2>
-        <button
-          onClick={onClose}
-          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+      <div className="flex items-center justify-between p-4 border-b">
+        <h2 className="text-lg font-semibold">Edit Image</h2>
+        <button onClick={onClose}><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" /></svg></button>
       </div>
 
-      <div className="flex-1 p-4 space-y-6 overflow-y-auto">
-        {/* Image Preview */}
-        <div className="rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
-          <img src={localClip.src} alt="Clip Preview" className="w-full h-auto object-contain" />
-        </div>
+      <div className="flex-1 p-4 space-y-4 overflow-y-auto">
+        <img src={localClip.src} className="w-full rounded-lg border" />
 
-        {/* Position */}
-        <div className="space-y-4">
-          <h3 className="text-md font-medium text-gray-900 dark:text-white">Position</h3>
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-              X Position: {localClip.position.x}%
-            </label>
-            <input
-              type="range" min="0" max="100"
-              value={localClip.position.x}
-              onChange={(e) => handlePositionUpdate({ x: parseInt(e.target.value) })}
-              className="w-full"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-              Y Position: {localClip.position.y}%
-            </label>
-            <input
-              type="range" min="0" max="100"
-              value={localClip.position.y}
-              onChange={(e) => handlePositionUpdate({ y: parseInt(e.target.value) })}
-              className="w-full"
-            />
-          </div>
+        <div>
+          <label>X Position: {localClip.position.x}%</label>
+          <input type="range" min="-50" max="150" value={localClip.position.x} onChange={(e) => handlePositionUpdate({ x: parseInt(e.target.value) })} className="w-full" />
         </div>
+        <div>
+          <label>Y Position: {localClip.position.y}%</label>
+          <input type="range" min="-50" max="150" value={localClip.position.y} onChange={(e) => handlePositionUpdate({ y: parseInt(e.target.value) })} className="w-full" />
+        </div>
+        <div>
+          <label>Scale: {localClip.transform.scale.toFixed(2)}</label>
+          <input type="range" min="0.1" max="5" step="0.05" value={localClip.transform.scale} onChange={(e) => handleTransformUpdate({ scale: parseFloat(e.target.value) })} className="w-full" />
+        </div>
+        <div>
+          <label>Rotation: {localClip.transform.rotation}°</label>
+          <input type="range" min="-180" max="180" value={localClip.transform.rotation} onChange={(e) => handleTransformUpdate({ rotation: parseInt(e.target.value) })} className="w-full" />
+        </div>
+      </div>
 
-        {/* Transform */}
-        <div className="space-y-4">
-          <h3 className="text-md font-medium text-gray-900 dark:text-white">Transform</h3>
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-              Scale: {localClip.transform.scale.toFixed(2)}
-            </label>
-            <input
-              type="range" min="0.1" max="5" step="0.05"
-              value={localClip.transform.scale}
-              onChange={(e) => handleTransformUpdate({ scale: parseFloat(e.target.value) })}
-              className="w-full"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-              Rotation: {localClip.transform.rotation}°
-            </label>
-            <input
-              type="range" min="-180" max="180"
-              value={localClip.transform.rotation}
-              onChange={(e) => handleTransformUpdate({ rotation: parseInt(e.target.value) })}
-              className="w-full"
-            />
-          </div>
-        </div>
+      <div className="p-4 border-t relative">
+        <button onClick={handleApplyToTrack} className="w-full py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+          Apply to All in Track
+        </button>
+        <AnimatePresence>
+          {showSuccess && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-green-500 text-white text-sm rounded-md">
+              Applied to all!
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

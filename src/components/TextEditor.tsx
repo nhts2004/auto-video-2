@@ -40,8 +40,8 @@ export default function TextEditor({ clip, onClose }: TextEditorProps) {
     handleUpdate({ position: newPosition });
   };
 
-  const handleApplyStyleToTrack = () => {
-    applyStyleToTrack(clip.trackId, localClip.style);
+  const handleApplyToTrack = () => {
+    applyStyleAndTransformToTrack(clip.trackId, localClip);
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 2000);
   };
@@ -164,7 +164,7 @@ export default function TextEditor({ clip, onClose }: TextEditorProps) {
           onClick={handleApplyStyleToTrack}
           className="w-full py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
         >
-          Apply Style to All in Track
+          Apply to All in Track
         </button>
         <AnimatePresence>
           {showSuccess && (

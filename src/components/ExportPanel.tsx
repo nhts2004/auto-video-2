@@ -391,6 +391,9 @@ export default function ExportPanel() {
           Export Information:
         </h4>
         <div className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+          {lastEncoderUsed && (
+            <div className="text-green-600 dark:text-green-400">Last Used Encoder: {lastEncoderUsed}</div>
+          )}
           <div>Project: {currentProject.name}</div>
           <div>Duration: {Math.round(currentProject.duration / 1000)}s</div>
           <div>Resolution: {currentProject.resolution.width} × {currentProject.resolution.height}</div>

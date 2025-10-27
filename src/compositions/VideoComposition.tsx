@@ -1,52 +1,75 @@
 import React from 'react';
-import {
-  AbsoluteFill,
-  useCurrentFrame,
-  useVideoConfig,
-} from 'remotion';
+import { AbsoluteFill, useCurrentFrame, Img, staticFile } from 'remotion';
+import { Project, Track, TextClip, ImageClip } from '@/types';
 
 interface VideoCompositionProps {
-  project?: any;
+  project: Project;
 }
 
-export const VideoComposition: React.FC<VideoCompositionProps> = ({ project }) => {
+const ClipContent: React.FC<{ clip: TextClip | ImageClip }> = ({ clip }) => {
+  const commonStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: `${clip.position.y}%`,
+    left: `${clip.position.x}%`,
+    transform: `translate(-50%, -50%) scale(${clip.transform.scale}) rotate(${clip.transform.rotation}deg)`,
+  };
+
+  if (clip.type === 'text') {
+    return (
+      <div style={{ ...commonStyle, ...clip.style, whiteSpace: 'pre-wrap' }}>
+        {clip.text}
+      </div>
+    );
+  }
+
+  if (clip.type === 'image') {
+    const src = clip.src.startsWith('blob:')
+      ? clip.src // Will likely not work in Remotion's render context, but fine for preview
+      : staticFile(clip.src);
+
+    return (
+      <Img
+        src={src}
+        style={{
+          ...commonStyle,
+          width: 'auto',
+          height: 'auto',
+          maxWidth: '100%',
+          maxHeight: '100%',
+        }}
+      />
+    );
+  }
+
+  return null;
+};
+
+export const MainComposition: React.FC<VideoCompositionProps> = ({ project }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const timeMs = (frame / project.fps) * 1000;
+
+  const imageTracks = project.tracks.filter(t => t.type === 'image');
+  const textTracks = project.tracks.filter(t => t.type === 'text');
 
   return (
     <AbsoluteFill style={{ backgroundColor: '#000000' }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100%',
-          color: 'white',
-          fontSize: 48,
-          fontFamily: 'Arial, sans-serif',
-        }}
-      >
-        <div style={{ textAlign: 'center' }}>
-          <div>Auto-Video Editor</div>
-          <div style={{ fontSize: 24, marginTop: 20 }}>
-            Frame: {frame} / FPS: {fps}
-          </div>
-          {project && (
-            <div style={{ fontSize: 18, marginTop: 10 }}>
-              Project: {project.name}
-            </div>
-          )}
-        </div>
-      </div>
-    </AbsoluteFill>
-  );
-};
+      {/* Render Image Tracks First (Bottom Layer) */}
+      {imageTracks.map(track => (
+        <React.Fragment key={track.id}>
+          {track.clips.filter(c => timeMs >= c.start && timeMs < c.end).map(clip => (
+            <ClipContent key={clip.id} clip={clip as ImageClip} />
+          ))}
+        </React.Fragment>
+      ))}
 
-// Main composition component
-export const MainComposition: React.FC<VideoCompositionProps> = ({ project }) => {
-  return (
-    <AbsoluteFill>
-      <VideoComposition project={project} />
+      {/* Render Text Tracks Second (Top Layer) */}
+      {textTracks.map(track => (
+        <React.Fragment key={track.id}>
+          {track.clips.filter(c => timeMs >= c.start && timeMs < c.end).map(clip => (
+            <ClipContent key={clip.id} clip={clip as TextClip} />
+          ))}
+        </React.Fragment>
+      ))}
     </AbsoluteFill>
   );
 };
