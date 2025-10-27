@@ -11,8 +11,10 @@ export default function ExportPanel() {
     currentProject,
     isRendering,
     renderProgress,
+    renderError,
     startRender,
     cancelRender,
+    clearRenderError,
     exportOptions,
     setRenderSettings
   } = useProjectStore();
@@ -39,7 +41,7 @@ export default function ExportPanel() {
       const format = exportFormats[selectedFormat as keyof typeof exportFormats];
       const content = format.exportFn(currentProject);
       const filename = `${currentProject.name}_${Date.now()}${format.extension}`;
-      
+
       downloadFile(content, filename, format.mimeType);
       setShowExportDialog(false);
     } else {
@@ -53,7 +55,10 @@ export default function ExportPanel() {
 
       setRenderSettings(renderSettings);
       await startRender(options);
-      setShowExportDialog(false);
+      // Keep dialog open if there is an error
+      if (!useProjectStore.getState().renderError) {
+        setShowExportDialog(false);
+      }
     }
   };
 
@@ -127,6 +132,31 @@ export default function ExportPanel() {
         )}
       </motion.button>
 
+      {/* Render Error */}
+      <AnimatePresence>
+        {renderError && !isRendering && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="bg-red-100 dark:bg-red-900/30 border border-red-400 dark:border-red-600 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg relative"
+            role="alert"
+          >
+            <strong className="font-bold">Render Failed: </strong>
+            <span className="block sm:inline">{renderError}</span>
+            <button
+              onClick={() => clearRenderError()}
+              className="absolute top-0 bottom-0 right-0 px-4 py-3"
+            >
+              <svg className="fill-current h-6 w-6 text-red-500" role="button" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                <title>Close</title>
+                <path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.2 1.2 0 0 1 0 1.698z" />
+              </svg>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Render Progress */}
       <AnimatePresence>
         {isRendering && (
@@ -145,7 +175,7 @@ export default function ExportPanel() {
                   {renderProgress}%
                 </span>
               </div>
-              
+
               <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                 <motion.div
                   className="bg-gradient-to-r from-green-600 to-blue-600 h-2 rounded-full"
